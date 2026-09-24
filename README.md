@@ -1,16 +1,16 @@
-# Kronos NSE Terminal for AI Studio
+# Kronos NSE Terminal — Upstox edition
 
-This application implements the reference Kronos NSE terminal features with Upstox replacing Zerodha Kite as the market-data provider.
+This is an AI Studio-compatible NSE analytics terminal based on the reference `kronos-nse-terminal` project. Market data is fetched exclusively from Upstox; Zerodha/Kite is not used.
 
-## Required secret
+## Security
 
-Add a valid Upstox OAuth access token to AI Studio Secrets:
+The Upstox JWT/access token pasted in chat is a credential. Revoke/rotate it immediately in the Upstox developer console and create a new token. Do not commit tokens or put them in source files.
+
+Configure the replacement token in AI Studio Secrets:
 
 ```text
-UPSTOX_ACCESS_TOKEN=...
+UPSTOX_ACCESS_TOKEN=your_new_upstox_access_token
 ```
-
-`UPSTOX_API_KEY` is not an access token and is intentionally not used as a bearer token. Upstox access tokens expire and must be refreshed according to your Upstox app configuration.
 
 ## Run
 
@@ -18,6 +18,6 @@ UPSTOX_ACCESS_TOKEN=...
 bash start_dev.sh
 ```
 
-The server listens on `PORT` (default `3000`). The dashboard provides market-data fetching, Plotly candlesticks, ORB, EMA/RSI/MACD/VWAP/Bollinger/ATR/SuperTrend indicators, Kronos model loading, asynchronous forecasts, signals and walk-forward backtests.
+The server uses `PORT` when supplied and otherwise listens on port 3000. Docker is also supported with `docker build -t kronos-nse .` and `docker run -p 3000:3000 -e UPSTOX_ACCESS_TOKEN=... kronos-nse`.
 
-The app does not place live orders. Forecasts and backtests are educational and are not financial advice.
+The terminal provides Upstox OHLCV fetching, candlesticks, ORB, EMA/RSI/MACD/VWAP/Bollinger/ATR/SuperTrend indicators, asynchronous forecasting, signals and walk-forward backtesting. It does not place live orders.

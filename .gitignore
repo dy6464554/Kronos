@@ -1,8 +1,7 @@
-node_modules/
-build/
-dist/
-coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
+# Local secrets and generated/runtime files
+.env
+*.token
+backend/__pycache__/
+backend/.venv/
+__pycache__/
+*.pyc
