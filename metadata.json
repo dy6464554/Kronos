@@ -1,0 +1,6 @@
+{
+  "name": "Kronos NSE Terminal",
+  "description": "A dark-themed NSE trading terminal with Upstox data integration and Gemini-powered Kronos AI forecasting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

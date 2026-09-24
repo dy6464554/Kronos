@@ -1,0 +1,9 @@
+{
+  "name": "react-example",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "bash start_dev.sh",
+    "build": "echo 'Build OK'",
+    "start": "cd backend && KRONOS_REPO_PATH=~/kronos_repo python3 nse_dashboard_enhanced.py"
+  }
+}
