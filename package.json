@@ -1,9 +1,9 @@
 {
-  "name": "react-example",
-  "version": "0.0.0",
+  "name": "kronos-upstox-terminal",
+  "version": "1.0.0",
   "scripts": {
     "dev": "bash start_dev.sh",
-    "build": "echo 'Build OK'",
-    "start": "cd backend && KRONOS_REPO_PATH=~/kronos_repo python3 nse_dashboard_enhanced.py"
+    "start": "cd backend && python3 nse_dashboard_enhanced.py",
+    "build": "echo 'AI Studio runtime uses the Flask backend'"
   }
 }
