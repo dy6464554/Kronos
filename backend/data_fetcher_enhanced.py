@@ -1,81 +1,228 @@
-"""Upstox-only OHLCV provider used by the terminal.
+"""Upstox-only OHLCV provider for the NSE terminal.
 
-The token is read at request time from UPSTOX_ACCESS_TOKEN and is never stored
-in source, logs, or a module-level variable.
+This provider reads the bearer token from the environment at runtime, so no
+secret is stored in source or logs. The terminal intentionally supports only
+Upstox for market data; legacy Kite/yfinance references are compatibility
+aliases.
 """
 from __future__ import annotations
-import json, math, os
+
+import json
+import math
+import os
 from datetime import date, datetime, time, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
 import pandas as pd
+import pytz
 
-IST = "Asia/Kolkata"
-MARKET_OPEN, MARKET_CLOSE = time(9, 15), time(15, 30)
+IST = pytz.timezone("Asia/Kolkata")
+MARKET_OPEN = time(9, 15)
+MARKET_CLOSE = time(15, 30)
+
 NSE_SYMBOLS = {
- "NIFTY 50":"NSE_INDEX|Nifty 50", "BANK NIFTY":"NSE_INDEX|Nifty Bank", "NIFTY IT":"NSE_INDEX|Nifty IT",
- "RELIANCE":"NSE_EQ|INE002A01018", "TCS":"NSE_EQ|INE467B01018", "HDFC BANK":"NSE_EQ|INE040A01034",
- "INFOSYS":"NSE_EQ|INE009A01021", "ICICI BANK":"NSE_EQ|INE090A01021", "KOTAK BANK":"NSE_EQ|INE237A01028",
- "AXIS BANK":"NSE_EQ|INE238A01034", "SBI":"NSE_EQ|INE062A01020", "LT":"NSE_EQ|INE018A01030",
- "WIPRO":"NSE_EQ|INE075A01022", "HCL TECH":"NSE_EQ|INE860A01027", "BAJAJ FINANCE":"NSE_EQ|INE296A01024",
- "MARUTI":"NSE_EQ|INE585B01010", "TITAN":"NSE_EQ|INE280A01028", "ASIAN PAINTS":"NSE_EQ|INE021A01026"
+    "NIFTY 50": "NSE_INDEX|Nifty 50",
+    "BANK NIFTY": "NSE_INDEX|Nifty Bank",
+    "NIFTY IT": "NSE_INDEX|Nifty IT",
+    "FIN NIFTY": "NSE_INDEX|Nifty Financial Services",
+    "RELIANCE": "NSE_EQ|INE002A01018",
+    "TCS": "NSE_EQ|INE467B01029",
+    "HDFC BANK": "NSE_EQ|INE040A01034",
+    "INFOSYS": "NSE_EQ|INE009A01021",
+    "ICICI BANK": "NSE_EQ|INE090A01021",
+    "KOTAK BANK": "NSE_EQ|INE237A01028",
+    "AXIS BANK": "NSE_EQ|INE238A01034",
+    "SBI": "NSE_EQ|INE062A01020",
+    "LT": "NSE_EQ|INE018A01030",
+    "WIPRO": "NSE_EQ|INE075A01022",
+    "HCL TECH": "NSE_EQ|INE860A01011",
+    "BAJAJ FINANCE": "NSE_EQ|INE296A01024",
+    "MARUTI": "NSE_EQ|INE585B01010",
+    "TITAN": "NSE_EQ|INE280A01028",
+    "ASIAN PAINTS": "NSE_EQ|INE021A01026",
 }
-INTERVALS = {"1m":"1minute", "5m":"5minute", "15m":"15minute", "30m":"30minute", "60m":"60minute", "1d":"day"}
-YF_PERIOD = {key:"upstox" for key in INTERVALS}
 
-def _token():
+UPSTOX_INTERVALS = {
+    "1m": "1minute",
+    "5m": "5minute",
+    "15m": "15minute",
+    "30m": "30minute",
+    "60m": "60minute",
+    "1d": "day",
+}
+
+UPSTOX_PERIOD_DAYS = {
+    "1m": 7,
+    "5m": 90,
+    "15m": 180,
+    "30m": 180,
+    "60m": 365,
+    "1d": 365 * 3,
+}
+
+
+def _upstox_access_token() -> str:
     token = os.getenv("UPSTOX_ACCESS_TOKEN", "").strip()
-    if not token: raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured in AI Studio Secrets.")
+    if not token:
+        raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured in AI Studio Secrets.")
     return token
 
-def _request(url):
-    req = Request(url, headers={"Accept":"application/json", "Authorization":"Bearer " + _token()})
+
+def _normalize_symbol(symbol: str) -> str:
+    if "|" in symbol:
+        return symbol
+    symbol = symbol.strip()
+    return NSE_SYMBOLS.get(symbol, symbol)
+
+
+def _fetch_url(symbol: str, interval: str) -> str:
+    key = _normalize_symbol(symbol)
+    if interval == "1m":
+        return f"https://api.upstox.com/v2/historical-candle/intraday/{quote(key, safe='')}/1minute"
+    return f"https://api.upstox.com/v2/historical-candle/{quote(key, safe='')}/{UPSTOX_INTERVALS[interval]}"
+
+
+def _request_json(url: str):
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Authorization": "Bearer " + _upstox_access_token(),
+        },
+    )
     try:
-        with urlopen(req, timeout=30) as response: payload=json.loads(response.read().decode())
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        detail=exc.read().decode(errors="replace")
-        raise RuntimeError(f"Upstox HTTP {exc.code}: {detail[:400]}") from exc
-    except URLError as exc: raise RuntimeError(f"Upstox connection failed: {exc.reason}") from exc
-    if payload.get("status") != "success": raise RuntimeError(str(payload.get("errors") or payload.get("message") or "Upstox request failed"))
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Upstox HTTP {exc.code}: {body[:500]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Upstox connection failed: {exc.reason}") from exc
+
+    if payload.get("status") != "success":
+        msg = payload.get("message") or payload.get("error") or payload.get("errors") or "Upstox request failed"
+        raise RuntimeError(str(msg))
     return payload
 
-def _historical_url(key, interval, end, start):
-    return f"https://api.upstox.com/v2/historical-candle/{quote(key, safe='')}/{INTERVALS[interval]}/{end:%Y-%m-%d}/{start:%Y-%m-%d}"
 
-def fetch_ohlcv(symbol, interval="5m", source="upstox"):
-    if source not in ("upstox", "auto"): raise ValueError("Only Upstox is supported as a data source.")
-    key=symbol if "|" in symbol else NSE_SYMBOLS.get(symbol)
-    if not key: raise ValueError(f"Unknown NSE symbol: {symbol}")
-    if interval not in INTERVALS: raise ValueError(f"Unsupported interval: {interval}")
-    days=365*5 if interval=="1d" else 7 if interval=="1m" else 180
-    candles=list(reversed(_request(_historical_url(key, interval, date.today(), date.today()-timedelta(days=days))).get("data",{}).get("candles",[])))
-    records=[]
-    for c in candles:
-        if len(c)<6: continue
-        ts=pd.to_datetime(c[0], utc=True).tz_convert(IST).tz_localize(None)
-        records.append({"timestamps":ts,"open":float(c[1]),"high":float(c[2]),"low":float(c[3]),"close":float(c[4]),"volume":float(c[5] or 0)})
-    df=pd.DataFrame(records).dropna().drop_duplicates("timestamps").sort_values("timestamps").reset_index(drop=True)
-    if df.empty: raise RuntimeError(f"Upstox returned no candles for {symbol} @ {interval}")
-    if interval!="1d": df=df[(df.timestamps.dt.time>=MARKET_OPEN)&(df.timestamps.dt.time<=MARKET_CLOSE)].reset_index(drop=True)
-    return df,"upstox"
+def _df_from_candles(raw: list) -> pd.DataFrame:
+    rows = []
+    for candle in raw:
+        if not isinstance(candle, (list, tuple)) or len(candle) < 6:
+            continue
+        ts_raw, o, h, l, c, v = candle[:6]
+        try:
+            ts = pd.to_datetime(ts_raw, utc=True).tz_convert(IST).tz_localize(None)
+            rows.append(
+                {
+                    "timestamps": ts,
+                    "open": float(o),
+                    "high": float(h),
+                    "low": float(l),
+                    "close": float(c),
+                    "volume": float(v or 0),
+                }
+            )
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame(columns=["timestamps", "open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(rows).drop_duplicates(subset=["timestamps"]).sort_values("timestamps").reset_index(drop=True)
+    return df
 
-def is_upstox_connected(): return bool(os.getenv("UPSTOX_ACCESS_TOKEN", "").strip())
-def set_upstox_session(*_args, **_kwargs): return is_upstox_connected()
-def is_kite_connected(): return is_upstox_connected()
-def set_kite_session(*args, **kwargs): return set_upstox_session(*args, **kwargs)
 
-def calculate_orb(df, orb_minutes=15):
-    work=df.copy(); work["_date"]=work.timestamps.dt.date; work["_mins"]=work.timestamps.dt.hour*60+work.timestamps.dt.minute; start=555; result={}
-    for day, group in work.groupby("_date"):
-        w=group[(group._mins>=start)&(group._mins<start+orb_minutes)]
-        if not w.empty: result[str(day)]={"high":float(w.high.max()),"low":float(w.low.min())}
-    return result
+def fetch_ohlcv(symbol: str, interval: str = "5m", source: str = "auto") -> tuple[pd.DataFrame, str]:
+    """Return (df, source_label) using Upstox as the only market data source."""
+    if source not in {"auto", "upstox", "yfinance", "kite"}:
+        raise ValueError(f"Unsupported source: {source}")
 
-def safe_float(value):
+    key = _normalize_symbol(symbol)
+    if not key:
+        raise ValueError(f"Unknown NSE symbol: {symbol}")
+    if interval not in UPSTOX_INTERVALS:
+        raise ValueError(f"Unsupported interval: {interval}")
+
+    # Compatibility: legacy callers may still send yfinance/kite; they map to Upstox.
+    if source in {"yfinance", "kite"}:
+        source = "upstox"
+
     try:
-        n=float(value); return 0.0 if not math.isfinite(n) else round(n,4)
-    except (TypeError,ValueError): return 0.0
+        if interval == "1m":
+            payload = _request_json(_fetch_url(key, interval))
+            candles = payload.get("data", {}).get("candles", [])
+        else:
+            payload = _request_json(_fetch_url(key, interval))
+            candles = payload.get("data", {}).get("candles", [])
 
-def df_to_records(df):
-    return [{"timestamp":r.timestamps.isoformat(),"open":safe_float(r.open),"high":safe_float(r.high),"low":safe_float(r.low),"close":safe_float(r.close),"volume":safe_float(r.volume)} for r in df.itertuples()]
+        df = _df_from_candles(candles)
+        if df.empty:
+            raise RuntimeError(f"Upstox returned no candles for {symbol} @ {interval}")
+
+        if interval != "1d":
+            df = df[(df["timestamps"].dt.time >= MARKET_OPEN) & (df["timestamps"].dt.time <= MARKET_CLOSE)].reset_index(drop=True)
+
+        if df.empty:
+            raise RuntimeError(f"Upstox returned no market-hours candles for {symbol} @ {interval}")
+
+        return df, "upstox"
+    except Exception as exc:
+        raise RuntimeError(f"All data sources failed for {symbol} @ {interval}: {exc}") from exc
+
+
+def is_upstox_connected() -> bool:
+    return bool(os.getenv("UPSTOX_ACCESS_TOKEN", "").strip())
+
+
+def set_upstox_session(*_args, **_kwargs) -> bool:
+    return is_upstox_connected()
+
+
+# Compatibility aliases for older code paths.
+def is_kite_connected() -> bool:
+    return is_upstox_connected()
+
+
+def set_kite_session(*_args, **_kwargs) -> bool:
+    return set_upstox_session(*_args, **_kwargs)
+
+
+def calculate_orb(df: pd.DataFrame, orb_minutes: int = 15) -> dict:
+    """Opening range breakout levels. Returns {date_str: {high, low}}."""
+    view = df.copy()
+    view["_date"] = view["timestamps"].dt.date
+    view["_mins"] = view["timestamps"].dt.hour * 60 + view["timestamps"].dt.minute
+    start_min = 9 * 60 + 15
+    output = {}
+    for day, grp in view.groupby("_date"):
+        window = grp[(grp["_mins"] >= start_min) & (grp["_mins"] < start_min + orb_minutes)]
+        if not window.empty:
+            output[str(day)] = {"high": float(window["high"].max()), "low": float(window["low"].min())}
+    return output
+
+
+def safe_float(value) -> float:
+    try:
+        raw = float(value)
+        return 0.0 if not math.isfinite(raw) else round(raw, 4)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def df_to_records(df: pd.DataFrame) -> list[dict]:
+    return [
+        {
+            "timestamp": row["timestamps"].isoformat(),
+            "open": safe_float(row["open"]),
+            "high": safe_float(row["high"]),
+            "low": safe_float(row["low"]),
+            "close": safe_float(row["close"]),
+            "volume": safe_float(row.get("volume", 0)),
+        }
+        for _, row in df.iterrows()
+    ]
+
+
+# Legacy alias for the original project's naming.
+fetch_data = fetch_ohlcv
