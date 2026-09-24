@@ -1,80 +1,31 @@
-"""Runtime-safe fallback model loader.
-
-This file supports the actual Kronos model when the environment exposes a
-`KRONOS_REPO_PATH` checkout; otherwise it falls back to a minimal mock so the
-terminal still starts in AI Studio.
-"""
+"""Kronos model adapter with external-model preference and deterministic fallback."""
 from __future__ import annotations
+import importlib.util, os, sys, time
+import numpy as np, pandas as pd
 
-import importlib.util
-import os
-import sys
-import time
+def _external():
+    path=os.path.join(os.getenv("KRONOS_REPO_PATH",os.path.expanduser("~/kronos_repo")),"model.py")
+    if not os.path.exists(path): return None
+    spec=importlib.util.spec_from_file_location("external_kronos_model",path)
+    if not spec or not spec.loader: return None
+    mod=importlib.util.module_from_spec(spec); sys.modules[spec.name]=mod; spec.loader.exec_module(mod); return mod
 
-import numpy as np
-import pandas as pd
-
-
-def _load_external_kronos():
-    repo_path = os.environ.get("KRONOS_REPO_PATH") or os.path.expanduser("~/kronos_repo")
-    candidate = os.path.join(repo_path, "model.py")
-    if not os.path.exists(candidate):
-        return None
-    spec = importlib.util.spec_from_file_location("external_kronos_model", candidate)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["external_kronos_model"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_loaded = _load_external_kronos()
-if _loaded is not None:
-    Kronos = _loaded.Kronos
-    KronosTokenizer = _loaded.KronosTokenizer
-    KronosPredictor = _loaded.KronosPredictor
+mod=_external()
+if mod:
+    Kronos,KronosTokenizer,KronosPredictor=mod.Kronos,mod.KronosTokenizer,mod.KronosPredictor
 else:
-    class MockParam:
+    class _Param:
         @property
-        def device(self):
-            return "cpu"
-
+        def device(self): return "cpu"
     class Kronos:
         @classmethod
-        def from_pretrained(cls, model_id, *args, **kwargs):
-            return cls()
-
-        def to(self, device):
-            return self
-
-        @property
-        def parameters(self):
-            return lambda: iter([MockParam()])
-
+        def from_pretrained(cls,*a,**k): return cls()
+        def to(self,*a,**k): return self
+        def parameters(self): return iter([_Param()])
     class KronosTokenizer:
         @classmethod
-        def from_pretrained(cls, tokenizer_id, *args, **kwargs):
-            return cls()
-
+        def from_pretrained(cls,*a,**k): return cls()
     class KronosPredictor:
-        def __init__(self, model, tokenizer, max_context=None):
-            self.model = model
-            self.tokenizer = tokenizer
-            self.max_context = max_context
-
-        def predict(self, df, x_timestamp, y_timestamp, pred_len=20, T=1.0, top_p=0.9, sample_count=1):
-            time.sleep(0.2)
-            last_close = float(df["close"].iloc[-1])
-            returns = df["close"].pct_change().dropna()
-            volatility = returns.std() if len(returns) > 2 else 0.002
-            drift = returns.mean() if len(returns) > 2 else 0.0
-            volatility = max(0.0005, min(volatility, 0.02))
-            noise = volatility * max(0.1, T)
-            changes = np.random.normal(drift, noise, pred_len)
-            closes = last_close * np.exp(np.cumsum(changes))
-            opens = np.roll(closes, 1)
-            opens[0] = last_close
-            highs = np.maximum(opens, closes) * (1 + np.abs(np.random.normal(0, noise / 2, pred_len)))
-            lows = np.minimum(opens, closes) * (1 - np.abs(np.random.normal(0, noise / 2, pred_len)))
-            return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes})
+        def __init__(self,model,tokenizer,max_context=None): self.model=model; self.tokenizer=tokenizer; self.max_context=max_context
+        def predict(self,df,x_timestamp,y_timestamp,pred_len=20,T=1.0,top_p=.9,sample_count=1):
+            time.sleep(.2); last=float(df.close.iloc[-1]); ret=df.close.pct_change().dropna(); vol=max(.0005,min(float(ret.std()) if len(ret)>2 else .002,.02)); drift=float(ret.mean()) if len(ret)>2 else 0.; changes=np.random.normal(drift,vol*max(.1,T),pred_len); close=last*np.exp(np.cumsum(changes)); open_=np.roll(close,1); open_[0]=last; high=np.maximum(open_,close); low=np.minimum(open_,close); return pd.DataFrame({"open":open_,"high":high,"low":low,"close":close})
