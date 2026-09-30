@@ -283,13 +283,16 @@ label{font-size:10px;color:var(--tm);display:block;margin-bottom:2px}
       <div class="bt-progress-bar" id="bt-prog-bar" style="width:0%"></div>
     </div>
     <div id="bt-results" style="display:none">
-      <div class="bt-metrics">
-        <div class="bt-m"><div class="ml">Hit Rate</div><div class="mv up" id="bt-hr">–</div></div>
-        <div class="bt-m"><div class="ml">Sharpe</div><div class="mv" id="bt-sharpe">–</div></div>
-        <div class="bt-m"><div class="ml">MAE</div><div class="mv" id="bt-mae">–</div></div>
-        <div class="bt-m"><div class="ml">Max DD</div><div class="mv dn" id="bt-dd">–</div></div>
+      <div class="bt-metrics" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="bt-m"><div class="ml">Win Rate</div><div class="mv up" id="bt-wr">–</div></div>
+        <div class="bt-m"><div class="ml">Profit Factor</div><div class="mv up" id="bt-pf">–</div></div>
+        <div class="bt-m"><div class="ml">Net Points</div><div class="mv up" id="bt-pts">–</div></div>
         <div class="bt-m"><div class="ml">Trades</div><div class="mv" id="bt-n">–</div></div>
         <div class="bt-m"><div class="ml">Total P&L</div><div class="mv" id="bt-pnl">–</div></div>
+        <div class="bt-m"><div class="ml">Max DD</div><div class="mv dn" id="bt-dd">–</div></div>
+        <div class="bt-m"><div class="ml">Hit Rate</div><div class="mv" id="bt-hr">–</div></div>
+        <div class="bt-m"><div class="ml">Sharpe</div><div class="mv" id="bt-sharpe">–</div></div>
+        <div class="bt-m"><div class="ml">MAE</div><div class="mv" id="bt-mae">–</div></div>
       </div>
       <div id="equity-chart" style="margin-top:6px"></div>
       <div class="trade-log" id="trade-log"></div>
@@ -641,6 +644,31 @@ function pollBacktest(jobId,btn){
 
 function showBacktestResults(d){
   document.getElementById('bt-results').style.display='block';
+
+  // Win Rate
+  const wrVal = d.win_rate !== undefined ? d.win_rate : d.hit_rate;
+  const wrElem = document.getElementById('bt-wr');
+  if (wrElem) {
+    wrElem.textContent = wrVal + '%';
+    wrElem.className = 'mv ' + (wrVal >= 50 ? 'up' : 'dn');
+  }
+
+  // Profit Factor
+  const pfVal = d.profit_factor !== undefined ? d.profit_factor : '–';
+  const pfElem = document.getElementById('bt-pf');
+  if (pfElem) {
+    pfElem.textContent = pfVal;
+    pfElem.className = 'mv ' + (typeof pfVal === 'number' && pfVal >= 1.5 ? 'up' : (typeof pfVal === 'number' && pfVal >= 1.0 ? '' : 'dn'));
+  }
+
+  // Net Points
+  const ptsVal = d.net_points !== undefined ? d.net_points : '–';
+  const ptsElem = document.getElementById('bt-pts');
+  if (ptsElem) {
+    ptsElem.textContent = (typeof ptsVal === 'number' && ptsVal > 0 ? '+' : '') + ptsVal + ' pt';
+    ptsElem.className = 'mv ' + (typeof ptsVal === 'number' && ptsVal >= 0 ? 'up' : 'dn');
+  }
+
   document.getElementById('bt-hr').textContent=d.hit_rate+'%';
   document.getElementById('bt-hr').className='mv '+(d.hit_rate>50?'up':'dn');
 
@@ -651,7 +679,7 @@ function showBacktestResults(d){
   const dd=document.getElementById('bt-dd');
   dd.textContent=d.max_drawdown+'%'; dd.style.color='var(--r)';
 
-  document.getElementById('bt-n').textContent=d.n_trades;
+  document.getElementById('bt-n').textContent=d.n_trades + (d.winning_trades !== undefined ? ` (${d.winning_trades}W / ${d.losing_trades}L)` : '');
   const pl=document.getElementById('bt-pnl');
   pl.textContent=(d.total_pnl>=0?'+':'')+'₹'+d.total_pnl.toLocaleString('en-IN');
   pl.style.color=d.total_pnl>=0?'var(--g)':'var(--r)';
@@ -669,9 +697,11 @@ function showBacktestResults(d){
   (d.trade_log||[]).slice(-10).reverse().forEach(t=>{
     const row=document.createElement('div');
     row.className='tr-row';
+    const ptsStr = t.net_points !== undefined ? `${t.net_points>=0?'+':''}${t.net_points}pt` : '';
     row.innerHTML=`<span style="color:var(--tm)">${t.entry_ts.slice(11,16)}</span>
       <span style="color:${t.direction==='UP'?'var(--g)':'var(--r)'}">${t.direction}</span>
       <span style="color:${t.correct?'var(--g)':'var(--r)'}">${t.correct?'✓':'✗'}</span>
+      <span style="color:var(--cy)">${ptsStr}</span>
       <span style="color:${t.pnl>=0?'var(--g)':'var(--r)'}">${t.pnl>=0?'+':''}₹${t.pnl.toLocaleString('en-IN')}</span>`;
     log.appendChild(row);
   });

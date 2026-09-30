@@ -46,18 +46,26 @@ class BacktestConfig:
 
 @dataclass
 class BacktestResult:
-    n_trades:      int   = 0
-    hit_rate:      float = 0.0
-    mae:           float = 0.0
-    mape:          float = 0.0
-    rmse:          float = 0.0
-    avg_return:    float = 0.0
-    sharpe_ratio:  float = 0.0
-    max_drawdown:  float = 0.0
-    total_pnl:     float = 0.0
-    equity_curve:  list  = field(default_factory=list)
-    trade_log:     list  = field(default_factory=list)
-    error:         Optional[str] = None
+    n_trades:       int   = 0
+    hit_rate:       float = 0.0
+    win_rate:       float = 0.0
+    profit_factor:  float = 0.0
+    net_points:     float = 0.0
+    gross_profit:   float = 0.0
+    gross_loss:     float = 0.0
+    winning_trades: int   = 0
+    losing_trades:  int   = 0
+    mae:            float = 0.0
+    mape:           float = 0.0
+    rmse:           float = 0.0
+    avg_return:     float = 0.0
+    sharpe_ratio:   float = 0.0
+    max_drawdown:   float = 0.0
+    total_pnl:      float = 0.0
+    equity_curve:   list  = field(default_factory=list)
+    trade_log:      list  = field(default_factory=list)
+    error:          Optional[str] = None
+
 
 
 # ── Core engine ───────────────────────────────────────────────────────────────
@@ -169,6 +177,7 @@ def run_backtest(
         cost        = 2 * cfg.transaction_cost
         net_ret     = raw_ret - cost
         trade_pnl   = cfg.position_size * net_ret
+        trade_pts   = pred_dir * (actual_close - last_close)
         equity     += trade_pnl
         returns.append(net_ret)
         equity_curve.append(equity)
@@ -181,6 +190,7 @@ def run_backtest(
             "actual_close": round(actual_close, 2),
             "direction":    "UP" if pred_dir == 1 else "DN",
             "correct":      pred_dir == actual_dir,
+            "net_points":   round(trade_pts, 2),
             "net_return":   round(net_ret * 100, 3),
             "pnl":          round(trade_pnl, 2),
         })
@@ -191,17 +201,28 @@ def run_backtest(
         return result
 
     returns_arr = np.array(returns)
+    pnls = [t["pnl"] for t in trade_log]
+    pts = [t["net_points"] for t in trade_log]
+    wins = [p for p in pnls if p > 0]
+    losses = [abs(p) for p in pnls if p < 0]
 
     # ── Aggregate metrics ────────────────────────────────────────────────
-    result.n_trades     = n
-    result.hit_rate     = round(correct_dir / n * 100, 2)
-    result.mae          = round(float(np.mean(abs_errors)), 2)
-    result.mape         = round(float(np.mean(pct_errors)), 3)
-    result.rmse         = round(float(np.sqrt(np.mean(errors_sq))), 2)
-    result.avg_return   = round(float(np.mean(returns_arr)) * 100, 3)
-    result.total_pnl    = round(equity - cfg.position_size, 2)
-    result.equity_curve = [round(v, 2) for v in equity_curve]
-    result.trade_log    = trade_log
+    result.n_trades       = n
+    result.hit_rate       = round(correct_dir / n * 100, 2)
+    result.win_rate       = round(len(wins) / n * 100, 2)
+    result.winning_trades = len(wins)
+    result.losing_trades  = len(losses)
+    result.gross_profit   = round(sum(wins), 2)
+    result.gross_loss     = round(sum(losses), 2)
+    result.profit_factor  = round(sum(wins) / sum(losses), 2) if sum(losses) > 0 else (999.0 if len(wins) > 0 else 0.0)
+    result.net_points     = round(float(sum(pts)), 2)
+    result.mae            = round(float(np.mean(abs_errors)), 2)
+    result.mape           = round(float(np.mean(pct_errors)), 3)
+    result.rmse           = round(float(np.sqrt(np.mean(errors_sq))), 2)
+    result.avg_return     = round(float(np.mean(returns_arr)) * 100, 3)
+    result.total_pnl      = round(equity - cfg.position_size, 2)
+    result.equity_curve   = [round(v, 2) for v in equity_curve]
+    result.trade_log      = trade_log
 
     # Sharpe (annualised assuming ~75 candles/day for 5-min)
     if returns_arr.std() > 0:
@@ -232,16 +253,24 @@ def _infer_freq(df: pd.DataFrame) -> pd.Timedelta:
 def result_to_dict(r: BacktestResult) -> dict:
     """Serialise BacktestResult to a JSON-safe dict."""
     return {
-        "n_trades":     r.n_trades,
-        "hit_rate":     r.hit_rate,
-        "mae":          r.mae,
-        "mape":         r.mape,
-        "rmse":         r.rmse,
-        "avg_return":   r.avg_return,
-        "sharpe_ratio": r.sharpe_ratio,
-        "max_drawdown": r.max_drawdown,
-        "total_pnl":    r.total_pnl,
-        "equity_curve": r.equity_curve,
-        "trade_log":    r.trade_log,
-        "error":        r.error,
+        "n_trades":       r.n_trades,
+        "hit_rate":       r.hit_rate,
+        "win_rate":       r.win_rate,
+        "profit_factor":  r.profit_factor,
+        "net_points":     r.net_points,
+        "gross_profit":   r.gross_profit,
+        "gross_loss":     r.gross_loss,
+        "winning_trades": r.winning_trades,
+        "losing_trades":  r.losing_trades,
+        "mae":            r.mae,
+        "mape":           r.mape,
+        "rmse":           r.rmse,
+        "avg_return":     r.avg_return,
+        "sharpe_ratio":   r.sharpe_ratio,
+        "max_drawdown":   r.max_drawdown,
+        "total_pnl":      r.total_pnl,
+        "equity_curve":   r.equity_curve,
+        "trade_log":      r.trade_log,
+        "error":          r.error,
     }
+

@@ -1,7 +1,7 @@
 """Compact, compatible Flask backend for the NSE terminal."""
 import json,math,os,sys,threading,uuid
 import pandas as pd, plotly.graph_objects as go
-from flask import Flask,jsonify,render_template,request
+from flask import Flask,jsonify,render_template,request,send_file
 from flask_cors import CORS
 HERE=os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0,HERE)
 from data_fetcher_enhanced import *
@@ -100,4 +100,26 @@ def backtest():
 def bt_status(job):
     with _lock:r=_jobs.get(job)
     return (jsonify({"error":"Unknown job"}),404) if r is None else jsonify(r)
+@app.get("/download/nifty50.csv")
+def dl_csv():
+    for f in ["nifty50_1min_with_volume.csv","nifty50_1min_2021_to_yesterday.csv"]:
+        p=os.path.join(HERE,"../data",f)
+        if os.path.exists(p): return send_file(p,as_attachment=True,download_name="nifty50_1min.csv",mimetype="text/csv")
+    return jsonify({"error":"File not found"}),404
+@app.get("/download/nifty50.json")
+def dl_json():
+    for f in ["nifty50_1min_with_volume.json","nifty50_1min_2021_to_yesterday.json"]:
+        p=os.path.join(HERE,"../data",f)
+        if os.path.exists(p): return send_file(p,as_attachment=True,download_name="nifty50_1min.json",mimetype="application/json")
+    return jsonify({"error":"File not found"}),404
+@app.get("/download/niftybees.csv")
+def dl_bees_csv():
+    p=os.path.join(HERE,"../data/niftybees_1min.csv")
+    if os.path.exists(p): return send_file(p,as_attachment=True,download_name="niftybees_1min.csv",mimetype="text/csv")
+    return jsonify({"error":"File not found"}),404
+@app.get("/download/niftybees.json")
+def dl_bees_json():
+    p=os.path.join(HERE,"../data/niftybees_1min.json")
+    if os.path.exists(p): return send_file(p,as_attachment=True,download_name="niftybees_1min.json",mimetype="application/json")
+    return jsonify({"error":"File not found"}),404
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT",3000)),debug=False)
